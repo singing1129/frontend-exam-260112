@@ -1,7 +1,5 @@
-// App.jsx
 import "./App.css";
 import React, { useEffect, useState } from "react";
-import * as XLSX from "xlsx"; // 讀 Excel
 import { Pie, Bar } from "react-chartjs-2";
 import {
   Chart as ChartJS,
@@ -13,7 +11,7 @@ import {
   BarElement,
 } from "chart.js";
 
-// 註冊 Chart.js 元件
+// 註冊 Chart.js
 ChartJS.register(
   ArcElement,
   Tooltip,
@@ -24,89 +22,36 @@ ChartJS.register(
 );
 
 function App() {
-  const [data, setData] = useState([]); // Excel 原始資料
-  const [countryData, setCountryData] = useState({}); // 圓餅圖資料
-  const [dateData, setDateData] = useState({}); // 長條圖資料
-  const barOptions = {
-    responsive: true,
-    maintainAspectRatio: false,
-  };
+  const [countryData, setCountryData] = useState({});
+  const [dateData, setDateData] = useState({});
+  const [loading, setLoading] = useState(true);
 
-  const pieOptions = {
-    responsive: true,
-    maintainAspectRatio: false,
-  };
-
-  // 解析 Excel 日期格式
-  const parseDate = (value) => {
-    if (!value) return "Unknown";
-
-    let dateObj;
-
-    if (value instanceof Date) {
-      dateObj = value;
-    } else if (typeof value === "number") {
-      const v = XLSX.SSF.parse_date_code(value);
-      dateObj = new Date(v.y, v.m - 1, v.d);
-    } else if (typeof value === "string") {
-      const [datePart] = value.split(" ");
-      const [y, m, d] = datePart.split(/[/-]/).map(Number);
-      dateObj = new Date(y, m - 1, d);
-    } else {
-      return "Unknown";
-    }
-
-    return dateObj.toISOString().slice(0, 10); // YYYY-MM-DD
-  };
+  const pieOptions = { responsive: true, maintainAspectRatio: false };
+  const barOptions = { responsive: true, maintainAspectRatio: false };
 
   useEffect(() => {
-    //  讀 Excel
+    setLoading(true);
+
+    // 建立 Web Worker
+    const worker = new Worker(new URL("./worker.js", import.meta.url));
+
     fetch("/exam.xlsx")
       .then((res) => res.arrayBuffer())
       .then((ab) => {
-        const workbook = XLSX.read(ab, {
-          type: "array",
-          cellDates: true, //  Excel日期變成JS Date物件
-        });
-        const sheetName = workbook.SheetNames[0];
-        const sheet = workbook.Sheets[sheetName];
-        const jsonData = XLSX.utils.sheet_to_json(sheet, {
-          raw: true, // 保留原始型別（Date / number）
-        });
-
-        // 圓餅圖
-        const countryCustomerMap = {};
-        jsonData.forEach((row) => {
-          const country = row.Country || "Unknown";
-          const customer = row.CustomerID || "Unknown";
-          if (!countryCustomerMap[country])
-            countryCustomerMap[country] = new Set();
-          countryCustomerMap[country].add(customer);
-        });
-        const countryCount = {};
-        Object.keys(countryCustomerMap).forEach(
-          (c) => (countryCount[c] = countryCustomerMap[c].size)
-        );
-        setCountryData(countryCount);
-
-        // 長條圖
-        const dateCount = {};
-        jsonData.forEach((row) => {
-          const date = parseDate(row.InvoiceDate);
-          dateCount[date] = (dateCount[date] || 0) + 1;
-        });
-
-        // 排序日期
-        const sortedDates = Object.keys(dateCount).sort(
-          (a, b) => new Date(a) - new Date(b)
-        );
-        const sortedDateCount = {};
-        sortedDates.forEach((d) => (sortedDateCount[d] = dateCount[d]));
-        setDateData(sortedDateCount);
+        worker.postMessage(ab);
       });
+
+    worker.onmessage = (e) => {
+      const { countryData, dateData } = e.data;
+      setCountryData(countryData);
+      setDateData(dateData);
+      setLoading(false);
+      worker.terminate();
+    };
+
+    return () => worker.terminate();
   }, []);
 
-  // // 圓餅圖資料顯示
   const pieData = {
     labels: Object.keys(countryData),
     datasets: [
@@ -127,7 +72,6 @@ function App() {
     ],
   };
 
-  // 長條圖資料顯示
   const barData = {
     labels: Object.keys(dateData),
     datasets: [
@@ -139,29 +83,30 @@ function App() {
     ],
   };
 
- return (
-  <div className="container">
-    <h1>Online Retail</h1>
+  return (
+    <div className="container">
+      <h1>Online Retail</h1>
+      {loading ? (
+        <p>Loading data, please wait...</p>
+      ) : (
+        <div className="dashboard">
+          <div className="card">
+            <h2>CustomerID of Country</h2>
+            <div className="chart">
+              <Pie data={pieData} options={pieOptions} />
+            </div>
+          </div>
 
-    <div className="dashboard">
-      {/* 左邊 Pie */}
-      <div className="card">
-        <h2>CustomerID of Country</h2>
-        <div className="chart">
-          <Pie data={pieData} options={pieOptions} />
+          <div className="card">
+            <h2>InvoiceDate per day</h2>
+            <div className="chart">
+              <Bar data={barData} options={barOptions} />
+            </div>
+          </div>
         </div>
-      </div>
-
-      {/* 右邊 Bar */}
-      <div className="card">
-        <h2>InvoiceDate per day</h2>
-        <div className="chart">
-          <Bar data={barData} options={barOptions} />
-        </div>
-      </div>
+      )}
     </div>
-  </div>
-);
+  );
 }
 
 export default App;
